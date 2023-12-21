@@ -1,0 +1,118 @@
+version: "3"
+
+services:
+
+  database:
+    image: "postgres:11"
+    environment:
+      POSTGRES_USER: omero
+      POSTGRES_DB: omero
+      POSTGRES_PASSWORD: omero
+    networks:
+      - omero
+    volumes:
+      - "./database:/var/lib/postgresql/data"
+
+  redis:
+    image: redis:6.0.8
+    networks:
+      - omero
+
+  omeroserver:
+    # This container uses the tag for the latest server release of OMERO 5
+    # To upgrade to the next major release, increment the major version number
+    image: "openmicroscopy/omero-server:5"
+    depends_on:
+      - database
+    environment:
+      CONFIG_omero_db_host: database
+      CONFIG_omero_db_user: omero
+      CONFIG_omero_db_pass: omero
+      CONFIG_omero_db_name: omero
+      ROOTPASS: omero
+    networks:
+      - omero
+    ports:
+      - "4063:4063"
+      - "4064:4064"
+    volumes:
+      - "./omero:/OMERO"
+      - "./omeroscripts:/opt/omero/server/OMERO.server/lib/scripts"
+
+  omerozarr:
+    image: openmicroscopy/omero-ms-zarr:0.1.6
+    depends_on:
+      - omeroserver
+    environment:
+      CONFIG_omero_db_host: database
+      CONFIG_omero_db_user: omero
+      CONFIG_omero_db_pass: omero
+      CONFIG_omero_db_name: omero
+      CONFIG_omero_ms_zarr_net_path_image: /idr/zarr/v0.1/{image}.zarr/
+    networks:
+      - omero
+    volumes:
+      - "./omero:/OMERO"
+
+  omeroweb:
+    # This container uses the tag for the latest web release of OMERO 5
+    # To upgrade to the next major release, increment the major version number
+    image: "openmicroscopy/omero-web-standalone:5"
+    depends_on:
+      - redis
+    environment:
+      OMEROHOST: omeroserver
+      CONFIG_omero_web_debug: "true"
+      CONFIG_omero_web_caches: '{"default": {"BACKEND": "django_redis.cache.RedisCache", "LOCATION": "redis://redis:6379/0"}}'
+      CONFIG_omero_web_session__cookie__name: sessionid
+      CONFIG_omero_web_session__engine: django.contrib.sessions.backends.cache
+    networks:
+      - omero
+    ports:
+      - "4080:4080"
+
+  omerothumbnail:
+    image: openmicroscopy/omero-ms-thumbnail
+    depends_on:
+      - omeroserver
+      - redis
+    networks:
+      - omero
+    volumes:
+      - "./thumbnail/config.yml:/opt/ms/conf/config.yaml:ro"
+
+  omeroimageregion:
+    # omero-ms-image-region 0.5.2
+    build: ./imageregion/
+    # command:
+    depends_on:
+      - omeroserver
+      - redis
+#    environment:
+      # Enable debug logs
+#      JAVA_OPTS: -Dlogback.configurationFile=/opt/ms/conf/logback-debug.xml
+    networks:
+      - omero
+    volumes:
+      - "./imageregion/config.yml:/opt/ms/conf/config.yaml:ro"
+#      - "./imageregion/logback-debug.xml:/opt/ms/conf/logback-debug.xml:ro"
+      - "./omero:/OMERO"
+      - "./omeroscripts:/opt/omero/server/OMERO.server/lib/scripts"
+
+  caddy:
+    image: caddy:2.1.1
+    # restart: unless-stopped
+    networks:
+      - omero
+    ports:
+      - "10080:80"
+    volumes:
+      - "./caddy/Caddyfile:/etc/caddy/Caddyfile:ro"
+
+networks:
+  omero:
+
+#volumes:
+  #database:
+  #omero:
+  #omeroscripts:
